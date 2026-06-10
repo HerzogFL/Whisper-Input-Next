@@ -69,6 +69,29 @@ This project is based on [ErlichLiu/Whisper-Input](https://github.com/ErlichLiu/
 
 ## 📦 Quick Start
 
+### ⚡ One-command setup (macOS / Apple Silicon)
+
+```bash
+git clone https://github.com/HerzogFL/Whisper-Input-Next.git
+cd Whisper-Input-Next
+brew install cmake          # skip if you already have cmake
+./setup.sh                  # venv + deps + build whisper.cpp + download model + generate .env
+```
+
+`setup.sh` does everything mechanical: creates the venv, installs deps, clones & builds whisper.cpp with Metal, downloads the `large-v3-turbo` model (~1.5GB), and writes a ready `.env` with local paths pre-filled. Two things it **can't** do for you:
+
+1. **Doubao keys** (only if you want the real-time `Ctrl+F` streaming mode) — edit `.env` and set `DOUBAO_APP_KEY` / `DOUBAO_ACCESS_KEY`. Local `Ctrl+I` mode needs no keys.
+2. **Launch + grant macOS permissions**:
+   ```bash
+   source .venv/bin/activate
+   python main.py
+   ```
+   On first run, grant **Accessibility** + **Microphone** to your terminal (System Settings → Privacy & Security), then quit and relaunch the terminal once.
+
+Then: **`Ctrl+F`** = Doubao real-time streaming · **`Ctrl+I`** = local offline (free).
+
+> The manual step-by-step install is below if you prefer to do it yourself.
+
 ### Environment Requirements
 - Python 3.12+
 - macOS/Linux (Windows support in development)
