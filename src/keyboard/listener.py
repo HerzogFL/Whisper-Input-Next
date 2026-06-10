@@ -2,6 +2,7 @@ from pynput.keyboard import Controller, Key, Listener
 import pyperclip
 from ..utils.logger import logger
 import time
+import threading
 from .inputState import InputState
 import os
 
@@ -19,6 +20,12 @@ class KeyboardManager:
         self.is_recording = False  # toggle模式的录音状态
         self.last_key_time = 0  # 防止重复触发
         self.KEY_DEBOUNCE_TIME = 0.3  # 按键防抖时间（秒）
+        # 把录音开关动作派发到工作线程执行：停止音频流会去抢 CoreAudio 的
+        # HAL 锁并阻塞，绝不能在 pynput 键盘事件回调线程里同步做，否则会
+        # 卡死事件回调、连带堵住整个系统键盘输入。下面用锁+pending标志确保
+        # 同一时刻只有一个录音开关动作在跑，避免按键重复刷出大量线程。
+        self._toggle_lock = threading.Lock()
+        self._toggle_pending = False
         self._original_clipboard = None  # 保存原始剪贴板内容
         
         
@@ -82,8 +89,20 @@ class KeyboardManager:
         except KeyError:
             logger.error(f"无效的翻译按钮配置：{translations_button}")
 
+        # 本地 Whisper 模式按键（默认 i，可通过 LOCAL_BUTTON 配置）
+        local_button = os.getenv("LOCAL_BUTTON", "i")
+        try:
+            if len(local_button) == 1 and local_button.isalpha():
+                self.local_button = local_button
+            else:
+                self.local_button = Key[local_button]
+            logger.info(f"配置到本地模型按钮(与翻译按钮组合)：{local_button}")
+        except KeyError:
+            logger.error(f"无效的本地模型按钮配置：{local_button}，回退到 i")
+            self.local_button = "i"
+
         logger.info(f"按 {translations_button} + {transcriptions_button} 键：切换录音状态（OpenAI GPT-4o transcribe 模式）")
-        logger.info(f"按 {translations_button} + I 键：切换录音状态（本地 Whisper 模式）")
+        logger.info(f"按 {translations_button} + {local_button} 键：切换录音状态（本地 Whisper 模式）")
         logger.info(f"两种模式都是按一下开始，再按一下结束")
     
     @property
@@ -295,6 +314,27 @@ class KeyboardManager:
         # 更新临时文本长度
         self.temp_text_length = len(text)
     
+    def _dispatch_toggle(self, fn):
+        """在工作线程里执行录音开关动作，确保键盘事件回调立即返回。
+
+        用 pending 标志防止按键重复（auto-repeat）刷出大量线程；用锁串行化，
+        避免 start/stop 竞态。真正的防抖仍在 fn(toggle_*) 内部完成。
+        """
+        with self._toggle_lock:
+            if self._toggle_pending:
+                return
+            self._toggle_pending = True
+
+        def _runner():
+            try:
+                fn()
+            except Exception as e:
+                logger.error(f"录音开关动作执行失败: {e}")
+            finally:
+                self._toggle_pending = False
+
+        threading.Thread(target=_runner, daemon=True).start()
+
     def toggle_recording(self):
         """切换录音状态"""
         current_time = time.time()
@@ -360,25 +400,31 @@ class KeyboardManager:
                 # 特殊键
                 is_translation_key = key == self.translations_button
             
-            # 检查I键（用于本地 Whisper 模式）
-            if hasattr(key, 'char') and key.char == 'i':
+            # 检查本地模型按键（字符键或特殊键，默认 i，可配置）
+            if isinstance(self.local_button, str):
+                is_local_key = hasattr(key, 'char') and key.char == self.local_button
+            else:
+                is_local_key = key == self.local_button
+
+            # 检查本地模型按键（用于本地 Whisper 模式）
+            if is_local_key:
                 self.i_pressed = True
-                # 检查是否同时按下了ctrl+i（本地 Whisper 模式）
+                # 检查是否同时按下了 ctrl+本地键（本地 Whisper 模式）
                 if self.ctrl_pressed and self.i_pressed:
-                    self.toggle_kimi_recording()
+                    self._dispatch_toggle(self.toggle_kimi_recording)
             elif is_transcription_key:  # F键
                 self.f_pressed = True
                 # 检查是否同时按下了ctrl+f
                 if self.ctrl_pressed and self.f_pressed:
-                    self.toggle_recording()
+                    self._dispatch_toggle(self.toggle_recording)
             elif is_translation_key:  # Ctrl键
                 self.ctrl_pressed = True
                 # 检查是否同时按下了ctrl+f（OpenAI GPT-4o transcribe 模式）
                 if self.ctrl_pressed and self.f_pressed:
-                    self.toggle_recording()
+                    self._dispatch_toggle(self.toggle_recording)
                 # 检查是否同时按下了ctrl+i（本地 Whisper 模式）
                 elif self.ctrl_pressed and self.i_pressed:
-                    self.toggle_kimi_recording()
+                    self._dispatch_toggle(self.toggle_kimi_recording)
         except AttributeError:
             pass
 
@@ -403,8 +449,12 @@ class KeyboardManager:
                 # 特殊键
                 is_translation_key = key == self.translations_button
                 
-            # 检查I键释放
-            if hasattr(key, 'char') and key.char == 'i':
+            # 检查本地模型按键释放
+            if isinstance(self.local_button, str):
+                is_local_key = hasattr(key, 'char') and key.char == self.local_button
+            else:
+                is_local_key = key == self.local_button
+            if is_local_key:
                 self.i_pressed = False
             elif is_transcription_key:  # F键释放
                 self.f_pressed = False

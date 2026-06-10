@@ -24,6 +24,7 @@ from AppKit import (
 from ApplicationServices import (
     AXUIElementCopyAttributeValue,
     AXUIElementCreateApplication,
+    AXUIElementSetMessagingTimeout,
     kAXFocusedUIElementAttribute,
     kAXPositionAttribute,
     kAXSizeAttribute,
@@ -64,6 +65,10 @@ def _get_caret_position() -> Tuple[float, float, float, float]:
     if app_element is None:
         raise RuntimeError(f"无法为 {app_name} 创建 AXUIElement")
 
+    # 关键：给 AX 同步调用设置 1 秒消息超时，避免目标 App 无响应时
+    # 阻塞主线程导致整个程序死锁（AX 调用默认无限期等待目标 App 主线程）
+    AXUIElementSetMessagingTimeout(app_element, 1.0)
+
     # 获取焦点元素
     err, focused_element = AXUIElementCopyAttributeValue(
         app_element, kAXFocusedUIElementAttribute, None
@@ -72,6 +77,9 @@ def _get_caret_position() -> Tuple[float, float, float, float]:
         raise RuntimeError(f"无法获取焦点元素, error={err}")
     if focused_element is None:
         raise RuntimeError("焦点元素为 None")
+
+    # 焦点元素是独立的 AX 引用，同样设置超时
+    AXUIElementSetMessagingTimeout(focused_element, 1.0)
 
     logger.info(f"[FloatingPreview] 焦点元素: {focused_element}")
 

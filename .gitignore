@@ -44,3 +44,11 @@ audio_archive/cache.json
 # 忽略 trash 目录
 trash/
 report*/
+
+# 忽略本地编译的 whisper.cpp（含 1.5GB 模型与 build 产物，不应入库）
+whisper.cpp/
+# 忽略本地工具（绿色版 cmake 等，体积大）
+tools/
+# 忽略模型权重
+*.bin
+*.gguf

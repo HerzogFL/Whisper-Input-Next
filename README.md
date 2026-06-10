@@ -85,7 +85,7 @@ cd Whisper-Input-Next
 
 2. **Create Virtual Environment**
 ```bash
-python -m .venv .venv
+python -m venv .venv
 source .venv/bin/activate  # macOS/Linux
 # or .venv\\Scripts\\activate  # Windows
 ```
@@ -95,19 +95,23 @@ source .venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 ```
 
-4. **Install Local whisper.cpp (Optional, required for local transcription)**
+4. **Install Local whisper.cpp (Optional — required only for the local `Ctrl+I` mode)**
+
+   Modern whisper.cpp builds with **CMake** (the old `make` is deprecated). On macOS install CMake first (`brew install cmake`), then:
 ```bash
-# Clone whisper.cpp repository
+# Clone into the project folder (it is git-ignored, won't be committed)
 git clone https://github.com/ggerganov/whisper.cpp.git
 cd whisper.cpp
 
-# Compile (macOS/Linux)
-make
+# Build with Metal acceleration (Apple Silicon)
+cmake -B build -DGGML_METAL=ON
+cmake --build build -j --config Release
 
-# Download model file (recommend large-v3)
-bash ./models/download-ggml-model.sh large-v3
+# Download a model. large-v3-turbo is recommended: near large-v3 accuracy,
+# 3-5x faster, ~1.5GB — ideal for an interactive voice-input tool.
+bash ./models/download-ggml-model.sh large-v3-turbo
 
-# Record whisper-cli path for later configuration in .env file
+# Note the CLI path for your .env (WHISPER_CLI_PATH)
 echo "Whisper CLI Path: $(pwd)/build/bin/whisper-cli"
 cd ..
 ```
@@ -115,31 +119,28 @@ cd ..
 5. **Configure Environment Variables**
 ```bash
 cp env.example .env
-# Edit .env file, configure necessary parameters:
-# - OFFICIAL_OPENAI_API_KEY: OpenAI API key (required)
-# - WHISPER_CLI_PATH: whisper.cpp executable path (required for local transcription)
-# - WHISPER_MODEL_PATH: whisper model file path (required for local transcription)
 ```
+   Edit `.env` (the template has every option with comments). Minimum to get going:
+   - **Doubao streaming (recommended, `Ctrl+F`)**: set `DOUBAO_APP_KEY` + `DOUBAO_ACCESS_KEY` (from the Volcengine *Speech* console — see "How to get Doubao API keys" below).
+   - **Local whisper (`Ctrl+I`)**: set `WHISPER_CLI_PATH` (absolute) + `WHISPER_MODEL_PATH` (relative to the whisper.cpp root, e.g. `models/ggml-large-v3-turbo.bin`).
+   - **Placeholder keys (required to boot)**: the app constructs OpenAI/Symbol/Kimi objects at startup, so `OFFICIAL_OPENAI_API_KEY`, `GROQ_API_KEY`, `KIMI_API_KEY` must be **non-empty** even if you only use Doubao/local. Any placeholder value works (the template ships with safe placeholders); replace `OFFICIAL_OPENAI_API_KEY` with a real key only if you actually use OpenAI transcription/translation.
 
 6. **Run Program**
 ```bash
 python main.py
-# or use startup script
+# or use the startup script
 chmod +x start.sh
 ./start.sh
 ```
+   On first run, macOS will ask for **Accessibility** and **Microphone** permissions for your terminal app (System Settings → Privacy & Security). Grant both, then fully quit and relaunch the terminal — global hotkeys and text injection won't work until the app is "trusted".
 
 ### ⚠️ Important Notes
 
-**Required Configuration:**
-- `OFFICIAL_OPENAI_API_KEY`: OpenAI GPT-4o transcribe API key
-- `WHISPER_CLI_PATH`: Local whisper.cpp executable absolute path
-- `WHISPER_MODEL_PATH`: whisper model file path (relative to whisper.cpp root directory)
-
-**whisper.cpp Installation Guide:**
-1. Clone and compile from [whisper.cpp repository](https://github.com/ggerganov/whisper.cpp)
-2. Download large-v3 model: `bash ./models/download-ggml-model.sh large-v3`
-3. Configure correct paths in .env
+- **`DOUBAO_APP_KEY` / `DOUBAO_ACCESS_KEY`**: from the Volcengine **Speech** console (streaming ASR large model). This is *not* the Volcengine Ark (方舟) API key and *not* a Coze token.
+- **`WHISPER_CLI_PATH`**: absolute path to the compiled `whisper-cli`.
+- **`WHISPER_MODEL_PATH`**: model path relative to the whisper.cpp root directory (e.g. `models/ggml-large-v3-turbo.bin`).
+- **Placeholder keys**: `OFFICIAL_OPENAI_API_KEY` / `GROQ_API_KEY` / `KIMI_API_KEY` must be non-empty for the app to start (placeholders are fine if unused).
+- `whisper.cpp/` and `tools/` are git-ignored — each user compiles whisper.cpp and downloads the model locally; the large files are never committed.
 
 ## ⚙️ Configuration Guide
 
@@ -164,11 +165,13 @@ WHISPER_CLI_PATH=/path/to/whisper.cpp/build/bin/whisper-cli
 WHISPER_MODEL_PATH=models/ggml-large-v3.bin
 
 # ============ Keyboard & System Configuration ============
-TRANSCRIPTIONS_BUTTON=f
+TRANSCRIPTIONS_BUTTON=f   # Ctrl+F: Doubao/OpenAI
+LOCAL_BUTTON=i            # Ctrl+I: local whisper.cpp (customizable)
 TRANSLATIONS_BUTTON=ctrl
 SYSTEM_PLATFORM=mac  # mac/win
 
 # Feature switches
+ENABLE_AUDIO_ARCHIVE=false  # save recordings to audio_archive/ (default off)
 CONVERT_TO_SIMPLIFIED=false
 ADD_SYMBOL=false
 OPTIMIZE_RESULT=false
@@ -311,6 +314,14 @@ python main.py
 - **Feature Suggestions**: [Discussions](https://github.com/Mor-Li/Whisper-Input-Next/discussions)
 
 ## 📋 Changelog
+
+### Stability fixes (deadlock-free on macOS + Python 3.13)
+- **Persistent audio stream**: The audio stream is now opened once and kept alive; recording start/stop only toggles a capture flag instead of tearing down the stream each time. This eliminates an intermittent PortAudio↔CoreAudio teardown deadlock (`AudioOutputUnitStop` ↔ `HALB_Mutex`) that could freeze the app after a while (symptom: gray mic icon, hotkey stops responding).
+- **Off-thread recording toggle**: Start/stop work is dispatched off the pynput keyboard-event-tap thread, so a slow audio op can never block the global keyboard input pipeline.
+- **Accessibility caret query timeout**: `AXUIElementSetMessagingTimeout(1.0)` on caret-position lookups prevents an unresponsive foreground app from hanging the main thread.
+- **Python 3.13 fix**: Bump `pynput` to ≥1.8.2 (1.7.7 crashed the keyboard listener on Python 3.13 via `_thread._ThreadHandle`).
+- **Chinese macOS mic detection**: Add `麦克风` keywords so the built-in mic ("MacBook Pro麦克风") is recognized on Chinese systems.
+- **New options**: `LOCAL_BUTTON` (customize the local-whisper hotkey, default `i`), `ENABLE_AUDIO_ARCHIVE` (default `false`, recordings no longer saved to disk by default).
 
 ### v3.3.0 (2026-03-11)
 - **Two-pass recognition**: Enable `enable_nonstream` for sentence-level re-recognition with nostream model, significantly improving accuracy (e.g. "广告位" → "光标位置")

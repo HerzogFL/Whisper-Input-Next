@@ -26,7 +26,7 @@ pip-tools==7.4.1
 pycparser==2.22
 pydantic==2.10.5
 pydantic-core==2.27.2
-pynput==1.7.7
+pynput>=1.8.2  # 1.7.7 在 Python 3.13 上键盘监听崩溃(_ThreadHandle)，需 >=1.8.0
 pyobjc-core==10.3.2
 pyobjc-framework-applicationservices==10.3.2
 pyobjc-framework-cocoa==10.3.2

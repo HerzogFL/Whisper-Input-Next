@@ -309,6 +309,9 @@ class VoiceAssistant:
     def _archive_audio_bytes(self, audio_bytes: Optional[bytes]) -> Optional[str]:
         if not audio_bytes:
             return None
+        # 默认不保存录音存档（避免占满磁盘）；设 ENABLE_AUDIO_ARCHIVE=true 可开启
+        if os.getenv("ENABLE_AUDIO_ARCHIVE", "false").lower() != "true":
+            return None
         return self.audio_archive.save_audio_bytes(audio_bytes)
 
     def _save_transcription_cache(
