@@ -1,4 +1,5 @@
 from pynput.keyboard import Controller, Key, Listener
+from pynput import mouse
 import pyperclip
 from ..utils.logger import logger
 import time
@@ -101,8 +102,22 @@ class KeyboardManager:
             logger.error(f"无效的本地模型按钮配置：{local_button}，回退到 i")
             self.local_button = "i"
 
+        # 鼠标按键单独触发本地 Whisper 模式（可选，通过 MOUSE_BUTTON 配置：
+        # middle / left / right；留空则禁用）。pynput 在 macOS 上把中键和拇指
+        # 侧键都归并为 middle，所以配 middle 时中键与侧键都能触发。
+        mouse_button_name = os.getenv("MOUSE_BUTTON", "").strip().lower()
+        self.mouse_button = None
+        if mouse_button_name:
+            try:
+                self.mouse_button = getattr(mouse.Button, mouse_button_name)
+                logger.info(f"配置到鼠标按键(单独触发本地 Whisper 模式)：{mouse_button_name}")
+            except AttributeError:
+                logger.error(f"无效的鼠标按键配置：{mouse_button_name}，已忽略")
+
         logger.info(f"按 {translations_button} + {transcriptions_button} 键：切换录音状态（OpenAI GPT-4o transcribe 模式）")
         logger.info(f"按 {translations_button} + {local_button} 键：切换录音状态（本地 Whisper 模式）")
+        if self.mouse_button is not None:
+            logger.info(f"按 鼠标{mouse_button_name} 键：切换录音状态（本地 Whisper 模式）")
         logger.info(f"两种模式都是按一下开始，再按一下结束")
     
     @property
@@ -464,10 +479,25 @@ class KeyboardManager:
         except AttributeError:
             pass
     
+    def on_mouse_click(self, x, y, button, pressed):
+        """鼠标按键回调：按下配置的鼠标键时触发本地 Whisper 录音开关（与 Ctrl+本地键等价）。"""
+        if not pressed or self.mouse_button is None:
+            return
+        if button == self.mouse_button:
+            self._dispatch_toggle(self.toggle_kimi_recording)
+
     def start_listening(self):
-        """开始监听键盘事件"""
-        with Listener(on_press=self.on_press, on_release=self.on_release) as listener:
-            listener.join()
+        """开始监听键盘事件（及可选的鼠标按键）"""
+        mouse_listener = None
+        if self.mouse_button is not None:
+            mouse_listener = mouse.Listener(on_click=self.on_mouse_click)
+            mouse_listener.start()
+        try:
+            with Listener(on_press=self.on_press, on_release=self.on_release) as listener:
+                listener.join()
+        finally:
+            if mouse_listener is not None:
+                mouse_listener.stop()
 
     def reset_state(self):
         """重置所有状态和临时文本"""
